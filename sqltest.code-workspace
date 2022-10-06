@@ -1,0 +1,62 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.associations": {
+      "array": "cpp",
+      "atomic": "cpp",
+      "*.tcc": "cpp",
+      "cctype": "cpp",
+      "clocale": "cpp",
+      "cmath": "cpp",
+      "compare": "cpp",
+      "concepts": "cpp",
+      "cstdint": "cpp",
+      "cstdio": "cpp",
+      "cstdlib": "cpp",
+      "cstring": "cpp",
+      "ctime": "cpp",
+      "cwchar": "cpp",
+      "cwctype": "cpp",
+      "map": "cpp",
+      "vector": "cpp",
+      "exception": "cpp",
+      "initializer_list": "cpp",
+      "iosfwd": "cpp",
+      "iostream": "cpp",
+      "istream": "cpp",
+      "limits": "cpp",
+      "new": "cpp",
+      "numbers": "cpp",
+      "optional": "cpp",
+      "ostream": "cpp",
+      "ratio": "cpp",
+      "semaphore": "cpp",
+      "sstream": "cpp",
+      "stdexcept": "cpp",
+      "stop_token": "cpp",
+      "streambuf": "cpp",
+      "string": "cpp",
+      "string_view": "cpp",
+      "system_error": "cpp",
+      "thread": "cpp",
+      "tuple": "cpp",
+      "type_traits": "cpp",
+      "typeinfo": "cpp",
+      "deque": "cpp",
+      "unordered_map": "cpp",
+      "functional": "cpp",
+      "iomanip": "cpp",
+      "utility": "cpp",
+      "bit": "cpp",
+      "memory": "cpp",
+      "algorithm": "cpp",
+      "chrono": "cpp",
+      "set": "cpp"
+    },
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  }
+}

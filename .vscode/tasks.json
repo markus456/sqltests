@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Build all",
+			"command": "make",
+			"options": {
+				"cwd": "/home/markusjm/sqltest/build"
+			},
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": [],
+			"detail": "CMake template build task"
+		}
+	]
+}
