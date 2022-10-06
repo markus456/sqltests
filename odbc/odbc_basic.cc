@@ -53,9 +53,9 @@ int main(int argc, char **argv)
         std::cout << "Usage: " << argv[0] << "[OPTIONS] " << *it << " CATALOG SCHEMA TABLE " << std::endl;
         return 1;
     }
-    else if (cmd == "copy" && cnf.args.size() < 2)
+    else if ((cmd == "copy" || cmd == "create_table") && cnf.args.size() < 2)
     {
-        std::cout << "Usage: " << argv[0] << "[OPTIONS] copy TABLE ... " << std::endl;
+        std::cout << "Usage: " << argv[0] << "[OPTIONS] " << cmd << " TABLE ... " << std::endl;
         return 1;
     }
 
@@ -178,19 +178,7 @@ int main(int argc, char **argv)
         {
             res = odbc.query(cnf.args[1]);
         }
-        else if (cmd == "create_table")
-        {
-            TableInfo t{cnf.args[1], cnf.args[2], cnf.args[3]};
-            auto translator = create_translator(cnf.dsn1.find("Postgres") != std::string::npos ? Source::POSTGRES : Source::MARIADB);
-            translator->prepare(odbc);
-            translator->start(odbc, {t});
-
-            for (auto create : translator->create_table(odbc, t))
-            {
-                std::cout << create << std::endl;
-            }
-        }
-        else if (cmd == "copy")
+        else if (cmd == "copy" || cmd == "create_table")
         {
             Source source_type = Source::MARIADB;
 
@@ -244,17 +232,37 @@ int main(int argc, char **argv)
                     c.digits = col.NUM_PREC_RADIX;
                     c.nullable = col.IS_NULLABLE == "YES";
 
-                    //t.columns.push_back(std::move(c));
+                    // t.columns.push_back(std::move(c));
                 }
 
                 tables.push_back(std::move(t));
             }
 
             auto translator = create_translator(source_type);
-
-            if (!odbc.copy_table(cnf.dsn1, cnf.dsn2, std::move(translator), tables))
+            if (cmd == "create_table")
             {
-                std::cout << "Error: " << odbc.error() << std::endl;
+                translator->prepare(odbc);
+                translator->start(odbc, tables);
+
+                for (const auto &t : tables)
+                {
+                    for (auto create : translator->create_table(odbc, t))
+                    {
+                        std::cout << create << std::endl;
+                    }
+
+                    for (auto index : translator->create_index(odbc, t))
+                    {
+                        std::cout << index << std::endl;
+                    }
+                }
+            }
+            else
+            {
+                if (!odbc.copy_table(cnf.dsn1, cnf.dsn2, std::move(translator), tables))
+                {
+                    std::cout << "Error: " << odbc.error() << std::endl;
+                }
             }
         }
 

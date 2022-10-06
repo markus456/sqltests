@@ -1,6 +1,7 @@
 #include "dialect.hh"
 #include "odbc.hh"
 #include "string_utils.hh"
+#include "diagnostics.hh"
 
 #include <utility>
 #include <iostream>
@@ -90,10 +91,10 @@ WITH coldefs AS (
   SELECT
     QUOTE_IDENT(column_name) || ' ' ||
     CASE
-      WHEN data_type LIKE 'timestamp%' THEN 'TIMESTAMP'
-      WHEN data_type LIKE 'time%' THEN 'TIME'
+      WHEN data_type LIKE 'timestamp%%' THEN 'TIMESTAMP'
+      WHEN data_type LIKE 'time%%' THEN 'TIME'
       WHEN data_type = 'jsonb' THEN 'JSON'
-      WHEN column_default LIKE 'nextval%' THEN 'SERIAL'
+      WHEN column_default LIKE 'nextval%%' THEN 'SERIAL'
       ELSE data_type
     END ||
     COALESCE('(' ||
@@ -107,7 +108,7 @@ WITH coldefs AS (
       ELSE ' NOT NULL'
     END ||
     CASE
-      WHEN column_default LIKE 'nextval%' THEN ''
+      WHEN column_default LIKE 'nextval%%' THEN ''
       WHEN is_generated = 'ALWAYS' THEN ' AS ' || generation_expression
       ELSE COALESCE(' DEFAULT ' || CASE WHEN data_type = 'text' THEN LEFT(column_default, -6) ELSE column_default END, '')
     END column_def
@@ -115,10 +116,12 @@ WITH coldefs AS (
   WHERE table_schema = '%s' AND table_name = '%s'
   ORDER BY ordinal_position
 )
-SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ')' create_sql FROM col_concat, idx_concat;
+SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ');' create_sql FROM coldefs;
 )";
 
         std::string sql = mxb::string_printf(CREATE_SQL, table.schema.c_str(), table.name.c_str(), table.name.c_str());
+
+        debug(sql);
 
         // std::ostringstream ss;
 
@@ -134,9 +137,13 @@ SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ')' create_sql F
         //    << " ORDER BY ordinal_position) "
         //    << "SELECT 'CREATE TABLE \"" << table.catalog << "\".\"" << table.name + "\"(' || STRING_AGG(column_def, ', ') || ')' FROM cols;";
 
-        if (auto res = source.query(sql); res && !(*res).empty() && !(*res)[0].empty() && !(*res)[0][0].has_value())
+        if (auto res = source.query(sql); res && !(*res).empty() && !(*res)[0].empty() && (*res)[0][0].has_value())
         {
             return {res.value()[0][0].value()};
+        }
+        else
+        {
+            std::cout << "Failed to read table definition: " << source.error() << std::endl;
         }
 
         return {};
@@ -155,7 +162,7 @@ SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ')' create_sql F
       THEN 'UNIQUE INDEX ' || i.relname
       ELSE 'INDEX ' || i.relname
     END
-    || '(' || STRING_AGG(a.attname, ',') || ')' index_def
+    || '(' || STRING_AGG(a.attname, ',') || ');' index_def
   FROM pg_class t, pg_class i, pg_index ix, pg_attribute a, pg_namespace n
   WHERE
     t.oid = ix.indrelid
@@ -172,6 +179,8 @@ SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ')' create_sql F
         std::string sql = mxb::string_printf(INDEX_SQL, table.name.c_str(), table.schema.c_str(), table.name.c_str());
         std::vector<std::string> rval;
 
+        debug(sql);
+
         if (auto res = source.query(sql); res && !res->empty() && !res->front().empty())
         {
             for (auto &val : res.value())
@@ -181,6 +190,10 @@ SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ')' create_sql F
                     rval.push_back(std::move(val.front().value()));
                 }
             }
+        }
+        else
+        {
+            std::cout << "Failed to read index definitions: " << source.error() << std::endl;
         }
 
         return rval;
