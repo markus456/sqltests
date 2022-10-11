@@ -226,7 +226,6 @@ int main(int argc, char **argv)
                     ColumnInfo c;
                     c.name = col.COLUMN_NAME;
                     c.data_type = col.DATA_TYPE;
-                    c.type = sql_to_mariadb_type(col.DATA_TYPE, col.COLUMN_SIZE);
                     c.size = col.COLUMN_SIZE;
                     c.buffer_size = std::max({col.BUFFER_LENGTH, col.CHAR_OCTET_LENGTH, col.COLUMN_SIZE});
                     c.digits = col.NUM_PREC_RADIX;
@@ -259,9 +258,13 @@ int main(int argc, char **argv)
             }
             else
             {
-                if (!odbc.copy_table(cnf.dsn1, cnf.dsn2, std::move(translator), tables))
+                try
                 {
-                    std::cout << "Error: " << odbc.error() << std::endl;
+                    copy_table(cnf.dsn1, cnf.dsn2, std::move(translator), tables);
+                }
+                catch(const std::exception& e)
+                {
+                    std::cerr << e.what() << '\n';
                 }
             }
         }

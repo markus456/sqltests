@@ -55,7 +55,10 @@
       "memory": "cpp",
       "algorithm": "cpp",
       "chrono": "cpp",
-      "set": "cpp"
+      "set": "cpp",
+      "cstdarg": "cpp",
+      "condition_variable": "cpp",
+      "mutex": "cpp"
     },
     "editor.defaultFormatter": "ms-vscode.cpptools"
   }

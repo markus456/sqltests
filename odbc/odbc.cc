@@ -129,110 +129,152 @@ ColumnType sql_to_mariadb_type(int data_type, int size)
     }
 }
 
-std::string to_mariadb_type(const ColumnInfo &info)
+std::string to_mariadb_type(const CatalogColumn &c)
 {
     std::ostringstream ss;
 
-    switch (info.type)
+    switch (c.DATA_TYPE)
     {
-    case ColumnType::TINYINT:
+    case SQL_TINYINT:
         ss << "TINYINT";
         break;
 
-    case ColumnType::SMALLINT:
+    case SQL_SMALLINT:
         ss << "SMALLINT";
         break;
 
-    case ColumnType::INT:
+    case SQL_INTEGER:
         ss << "INT";
         break;
 
-    case ColumnType::BIGINT:
+    case SQL_BIGINT:
         ss << "BIGINT";
         break;
 
-    case ColumnType::FLOAT:
+    case SQL_FLOAT:
+    case SQL_REAL:
         ss << "FLOAT";
         break;
 
-    case ColumnType::DOUBLE:
+    case SQL_DOUBLE:
         ss << "DOUBLE";
         break;
 
-    case ColumnType::BIT:
+    case SQL_BIT:
         ss << "BIT";
         break;
 
-    case ColumnType::CHAR:
-        ss << "CHAR(" << info.size << ")";
+    case SQL_WCHAR:
+    case SQL_CHAR:
+        ss << "CHAR(" << c.COLUMN_SIZE << ")";
         break;
 
-    case ColumnType::VARCHAR:
-        ss << "VARCHAR(" << info.size << ")";
+    case SQL_GUID:
+        ss << "CHAR(16)";
         break;
 
-    case ColumnType::BINARY:
-        ss << "BINARY(" << info.size << ")";
+    case SQL_WVARCHAR:
+    case SQL_VARCHAR:
+        ss << "VARCHAR(" << c.COLUMN_SIZE << ")";
         break;
 
-    case ColumnType::VARBINARY:
-        ss << "VARBINARY(" << info.size << ")";
+    case SQL_BINARY:
+        ss << "BINARY(" << c.COLUMN_SIZE << ")";
         break;
 
-    case ColumnType::DECIMAL:
-        ss << "DECIMAL(" << info.digits << ")";
+    case SQL_VARBINARY:
+        ss << "VARBINARY(" << c.COLUMN_SIZE << ")";
         break;
 
-    case ColumnType::TEXT:
-        ss << "TEXT";
+    case SQL_DECIMAL:
+    case SQL_NUMERIC:
+        ss << "DECIMAL(" << c.DECIMAL_DIGITS << "," << c.NUM_PREC_RADIX << ")";
         break;
 
-    case ColumnType::MEDIUMTEXT:
-        ss << "MEDIUMTEXT";
+    case SQL_WLONGVARCHAR:
+    case SQL_LONGVARCHAR:
+        if (c.CHAR_OCTET_LENGTH < 16384)
+        {
+            ss << "VARCHAR(" << c.COLUMN_SIZE << ")";
+        }
+        else if (c.CHAR_OCTET_LENGTH < 65535)
+        {
+            ss << "TEXT";
+        }
+        else if (c.CHAR_OCTET_LENGTH < 16777215)
+        {
+            ss << "MEDIUMTEXT";
+        }
+        else
+        {
+            ss << "LONGTEXT";
+        }
         break;
 
-    case ColumnType::LONGTEXT:
-        ss << "LONGTEXT";
-        break;
-    case ColumnType::BLOB:
-        ss << "BLOB";
+    case SQL_LONGVARBINARY:
+        if (c.CHAR_OCTET_LENGTH < 16384)
+        {
+            ss << "VARBINARY(" << c.CHAR_OCTET_LENGTH << ")";
+        }
+        else if (c.CHAR_OCTET_LENGTH < 65535)
+        {
+            ss << "BLOB";
+        }
+        else if (c.CHAR_OCTET_LENGTH < 16777215)
+        {
+            ss << "MEDIUMBLOB";
+        }
+        else
+        {
+            ss << "LONGBLOB";
+        }
         break;
 
-    case ColumnType::MEDIUMBLOB:
-        ss << "MEDIUMBLOB";
-        break;
-
-    case ColumnType::LONGBLOB:
-        ss << "LONGBLOB";
-        break;
-
-    case ColumnType::DATE:
+    case SQL_TYPE_DATE:
         ss << "DATE";
         break;
 
-    case ColumnType::TIME:
-        ss << "TIME(" << info.digits << ")";
+#ifdef SQL_TYPE_UTCTIME
+    case SQL_TYPE_UTCTIME:
+#endif
+    case SQL_TYPE_TIME:
+        ss << "TIME";
         break;
 
-    case ColumnType::TIMESTAMP:
-        ss << "TIMESTAMP(" << info.digits << ")";
+    case SQL_TYPE_TIMESTAMP:
+        ss << "TIMESTAMP";
         break;
 
-    case ColumnType::DATETIME:
-        ss << "DATETIME(" << info.digits << ")";
+#ifdef SQL_TYPE_UTCDATETIME
+    case SQL_TYPE_UTCDATETIME:
+#endif
+    case SQL_INTERVAL_MONTH:
+    case SQL_INTERVAL_YEAR:
+    case SQL_INTERVAL_YEAR_TO_MONTH:
+    case SQL_INTERVAL_DAY:
+    case SQL_INTERVAL_HOUR:
+    case SQL_INTERVAL_MINUTE:
+    case SQL_INTERVAL_SECOND:
+    case SQL_INTERVAL_DAY_TO_HOUR:
+    case SQL_INTERVAL_DAY_TO_MINUTE:
+    case SQL_INTERVAL_DAY_TO_SECOND:
+    case SQL_INTERVAL_HOUR_TO_MINUTE:
+    case SQL_INTERVAL_HOUR_TO_SECOND:
+    case SQL_INTERVAL_MINUTE_TO_SECOND:
+        ss << "DATETIME";
         break;
 
     default:
-        ss << "UNKNOWN(" << info.data_type << ")";
+        ss << "UNKNOWN";
         break;
     }
 
-    ss << " " << (info.nullable ? "NULL" : "NOT NULL");
+    ss << " " << (c.IS_NULLABLE == "YES" ? "NULL" : "NOT NULL");
 
     return ss.str();
 }
 
-ODBC::ResultBuffer::ResultBuffer(const std::vector<ColumnInfo> &infos)
+ResultBuffer::ResultBuffer(const std::vector<ColumnInfo> &infos)
 {
     size_t row_size = 0;
 
@@ -253,7 +295,7 @@ ODBC::ResultBuffer::ResultBuffer(const std::vector<ColumnInfo> &infos)
     }
 }
 
-size_t ODBC::ResultBuffer::buffer_size(const ColumnInfo &c) const
+size_t ResultBuffer::buffer_size(const ColumnInfo &c) const
 {
     // return std::min(1024UL * 1024, std::max(c.buffer_size, c.size) + 1);
 
@@ -283,12 +325,12 @@ size_t ODBC::ResultBuffer::buffer_size(const ColumnInfo &c) const
     }
 }
 
-bool ODBC::Column::is_null(int row) const
+bool ResultBuffer::Column::is_null(int row) const
 {
     return indicators[row] == SQL_NULL_DATA;
 }
 
-std::string ODBC::Column::to_string(int row) const
+std::string ResultBuffer::Column::to_string(int row) const
 {
     std::string rval;
     const uint8_t *ptr = buffers.data() + buffer_size * row;
@@ -330,9 +372,32 @@ std::string ODBC::Column::to_string(int row) const
     return rval;
 }
 
-ODBC::ODBC(std::string dsn, std::string host, int port, std::string user, std::string password)
-    : ODBC(dsn + ";SERVER=" + host + ";PORT=" + std::to_string(port) + ";UID=" + user + ";PWD=" + password)
+bool ODBC::TextResult::send(const std::vector<ColumnInfo> &metadata, ResultBuffer &res, SQLULEN rows_fetched)
 {
+    int columns = metadata.size();
+
+    for (SQLULEN i = 0; i < rows_fetched; i++)
+    {
+        Row row(columns);
+        debug("Row", i, "status:", row_status_to_str(res.row_status[i]));
+
+        if (res.row_status[i] == SQL_ROW_SUCCESS || res.row_status[i] == SQL_ROW_SUCCESS_WITH_INFO)
+        {
+            for (int c = 0; c < columns; c++)
+            {
+                if (!res.columns[c].is_null(i))
+                {
+                    row[c] = res.columns[c].to_string(i);
+                }
+
+                debug("Row", i, "column", c, row[c].value_or("<NULL>"));
+            }
+        }
+
+        result.push_back(std::move(row));
+    }
+
+    return true;
 }
 
 ODBC::ODBC(std::string dsn)
@@ -355,10 +420,11 @@ ODBC::~ODBC()
 
 bool ODBC::connect()
 {
+    SQLSetConnectAttr(m_conn, SQL_ATTR_AUTOCOMMIT, (SQLPOINTER)SQL_AUTOCOMMIT_OFF, 0);
+    SQLSetConnectAttr(m_conn, SQL_ATTR_TXN_ISOLATION, (SQLPOINTER)SQL_TXN_REPEATABLE_READ, 0);
+
     SQLCHAR outbuf[1024];
     SQLSMALLINT s2len;
-    debug("Connection string:", m_dsn);
-
     SQLRETURN ret = SQLDriverConnect(m_conn, nullptr, (SQLCHAR *)m_dsn.c_str(), m_dsn.size(),
                                      outbuf, sizeof(outbuf), &s2len, SQL_DRIVER_NOPROMPT);
 
@@ -374,7 +440,6 @@ bool ODBC::connect()
     {
         debug("SQLDriverConnect:", ret_to_str(ret));
         SQLAllocHandle(SQL_HANDLE_STMT, m_conn, &m_stmt);
-        // SQLSetStmtAttr(m_stmt, SQL_ATTR_METADATA_ID, (void*)SQL_TRUE, 0);
     }
 
     return SQL_SUCCEEDED(ret);
@@ -611,6 +676,17 @@ std::optional<ODBC::Result> ODBC::query(const std::string &query)
     return read_response(ret);
 }
 
+bool ODBC::commit()
+{
+    return SQL_SUCCEEDED(SQLEndTran(SQL_HANDLE_DBC, m_conn, SQL_COMMIT));
+}
+
+bool ODBC::stream(const std::string &query, Output *output)
+{
+    SQLRETURN ret = SQLExecDirect(m_stmt, (SQLCHAR *)query.c_str(), query.size());
+    return process_response(ret, output);
+}
+
 void ODBC::print_columns(const std::vector<ColumnInfo> &columns)
 {
     if (columns.empty())
@@ -743,62 +819,83 @@ std::string ODBC::as_string(const Value &val) const
     return val.value_or("");
 }
 
-bool ODBC::copy_table(std::string src_dsn, std::string dest_dsn, std::unique_ptr<Translator> translator, const std::vector<TableInfo> &tables)
+void copy_table(std::string src_dsn, std::string dest_dsn, std::unique_ptr<Translator> translator, const std::vector<TableInfo> &tables)
 {
     bool ok = true;
     std::vector<std::tuple<std::unique_ptr<ODBC>, std::unique_ptr<ODBC>, TableInfo>> jobs;
     jobs.reserve(tables.size());
 
-    if (!translator->prepare(*this))
+    ODBC coordinator(src_dsn);
+
+    if (!coordinator.connect())
     {
-        std::cout << "Prepare failed: " << error() << std::endl;
-        return false;
-    }
-    else if (!translator->start(*this, tables))
-    {
-        std::cout << "Start failed: " << error() << std::endl;
-        return false;
+        throw FatalError("Coordinator connect failed:", coordinator.error());
     }
 
-    std::cout << "Prepare successful" << std::endl;
+    if (!translator->prepare(coordinator))
+    {
+        throw FatalError("Prepare failed:", coordinator.error());
+    }
+    else if (!translator->start(coordinator, tables))
+    {
+        throw FatalError("Start failed:", coordinator.error());
+    }
+
+    debug("Prepare successful");
+
+    auto SQL_SETUP = "SET MAX_STATEMENT_TIME=0, SQL_MODE='ANSI_QUOTES', UNIQUE_CHECKS=0, FOREIGN_KEY_CHECKS=0, SQL_NOTES=0, AUTOCOMMIT=0";
 
     for (const auto &table : tables)
     {
         std::cout << "Dumping: " << table.name << std::endl;
         auto &[src, dest, tbl] = jobs.emplace_back(std::make_unique<ODBC>(src_dsn), std::make_unique<ODBC>(dest_dsn), table);
 
-        if (src->connect() && dest->connect() && translator->prepare(*src) && translator->start_thread(*src, table) && dest->prepare_for_transfer())
+        if (!src->connect())
         {
-            if (auto create = translator->create_table(*src, table); !create.empty())
-            {
-                for (const auto &c : create)
-                {
-                    debug("CREATE:", c);
-
-                    if (!dest->query(c))
-                    {
-                        std::cout << "CREATE FAILED: " << c << ": " << dest->error() << std::endl;
-                        return false;
-                    }
-                }
-            }
-            else
-            {
-                std::cout << "Could not get SQL for CREATE TABLE." << std::endl;
-                return false;
-            }
+            throw FatalError("Failed to connect to source:", src->error());
         }
-        else
+        else if (!dest->connect())
         {
-            std::cout << "Error: " << src->error() << dest->error() << std::endl;
-            return false;
+            throw FatalError("Failed to connect to destination:", dest->error());
+        }
+        else if (!translator->prepare(*src))
+        {
+            throw FatalError("Failed to prepare source:", dest->error());
+        }
+        else if (!translator->start_thread(*src, table))
+        {
+            throw FatalError("Failed to prepare worker thread:", src->error());
+        }
+        else if (!dest->query(SQL_SETUP))
+        {
+            throw FatalError("Failed to prepare destination connection:", dest->error());
+        }
+
+        auto create = translator->create_table(*src, table);
+
+        if (create.empty())
+        {
+            throw FatalError("Could not get SQL for CREATE TABLE for table", table.name);
+        }
+
+        for (const auto &c : create)
+        {
+            debug("CREATE:", c);
+
+            if (c.empty())
+            {
+                throw FatalError("Empty CREATE TABLE sql");
+            }
+            if (!dest->query(c))
+            {
+                throw FatalError("CREATE TABLE failed. (", c, ") :", dest->error());
+            }
         }
     }
 
-    if (!translator->threads_started(*this, tables))
+    if (!translator->threads_started(coordinator, tables))
     {
-        std::cout << "Post-start failed:" << error() << std::endl;
-        return false;
+        throw FatalError("Post-start failed:", coordinator.error());
     }
 
     for (auto &[src, dest, tbl] : jobs)
@@ -807,82 +904,99 @@ bool ODBC::copy_table(std::string src_dsn, std::string dest_dsn, std::unique_ptr
 
         if (sql.empty())
         {
-            std::cout << "Could not get SQL for SELECT." << std::endl;
-            return false;
+            throw FatalError("Could not get SQL for SELECT for table", tbl.name);
         }
-        else
+
+        std::cout << "Starting dump" << std::endl;
+        auto start = std::chrono::steady_clock::now();
+
+        debug("SELECT:", sql);
+
+        auto insert = translator->insert(*src, tbl);
+
+        if (insert.empty())
         {
-
-            std::cout << "Starting dump" << std::endl;
-            auto start = std::chrono::steady_clock::now();
-
-            src->set_output(dest.get());
-
-            std::cout << "SELECT: " << sql << std::endl;
-
-            if (!dest->setup_transfer(tbl))
-            {
-                std::cout << "Setup transfer failed: " << dest->error() << std::endl;
-                return false;
-            }
-            else if (!src->query(sql))
-            {
-                std::cout << "SELECT failed: " << src->error() << std::endl;
-                return false;
-            }
-            else if (!dest->finish_transfer(tbl))
-            {
-                std::cout << "Finish transfer failed: " << dest->error() << std::endl;
-                return false;
-            }
-
-            src->set_output(nullptr);
-
-            auto end = std::chrono::steady_clock::now();
-            auto dur = std::chrono::duration_cast<std::chrono::duration<float>>(end - start);
-            start = end;
-
-            std::cout << "Dump complete, took " << dur.count() << " seconds. Creating indexes..." << std::endl;
-
-            for (auto idx_sql : translator->create_index(*src, tbl))
-            {
-                std::cout << idx_sql << std::endl;
-
-                if (!dest->query(idx_sql))
-                {
-                    std::cout << "Index creation failed: " << dest->error() << std::endl;
-                    return false;
-                }
-            }
-
-            end = std::chrono::steady_clock::now();
-            dur = std::chrono::duration_cast<std::chrono::duration<float>>(end - start);
-            std::cout << "Index creation complete, took " << dur.count() << " seconds." << std::endl;
+            throw FatalError("Could not get SQL for INSERT for table", tbl.name);
         }
+        else if (!dest->prepare(insert))
+        {
+            throw FatalError("Setup transfer failed:", dest->error());
+        }
+        else if (!src->stream(sql, dest.get()))
+        {
+            throw FatalError("Streaming data failed:", src->error());
+        }
+        else if (!dest->commit())
+        {
+            throw FatalError("Finish transfer failed:", dest->error());
+        }
+
+        auto end = std::chrono::steady_clock::now();
+        auto dur = std::chrono::duration_cast<std::chrono::duration<float>>(end - start);
+        start = end;
+
+        std::cout << "Dump complete, took " << dur.count() << " seconds. Creating indexes..." << std::endl;
+
+        for (auto idx_sql : translator->create_index(*src, tbl))
+        {
+            std::cout << idx_sql << std::endl;
+
+            if (!dest->query(idx_sql))
+            {
+                throw FatalError("Index creation failed:", dest->error());
+            }
+        }
+
+        end = std::chrono::steady_clock::now();
+        dur = std::chrono::duration_cast<std::chrono::duration<float>>(end - start);
+        std::cout << "Index creation complete, took " << dur.count() << " seconds." << std::endl;
 
         translator->stop_thread(*src, tbl);
         src->disconnect();
         dest->disconnect();
     }
-
-    return true;
 }
 
 std::optional<ODBC::Result> ODBC::read_response(SQLRETURN ret)
 {
     std::optional<Result> rval;
+    TextResult result;
+
+    if (process_response(ret, &result))
+    {
+        rval = result.result;
+    }
+
+    return rval;
+}
+
+bool ODBC::process_response(SQLRETURN ret, ODBC::Output *handler)
+{
+    bool ok = false;
     debug("read_response:", ret_to_str(ret));
 
     if (SQL_SUCCEEDED(ret))
     {
-        rval = get_result();
+        SQLSMALLINT columns = 0;
+        SQLRETURN ret = SQLNumResultCols(m_stmt, &columns);
+        debug("get_result", ret_to_str(ret), "columns", columns);
+
+        if (columns == 0)
+        {
+            ok = true;
+        }
+        else if (columns > 0)
+        {
+            m_columns = get_headers(columns);
+            ok = can_batch() ? get_batch_result(columns, handler) : get_normal_result(columns, handler);
+        }
     }
     else
     {
         m_error = get_error(SQL_HANDLE_STMT, m_stmt);
     }
 
-    return rval;
+    return ok;
 }
 
 bool ODBC::data_truncation()
@@ -911,30 +1025,6 @@ bool ODBC::data_truncation()
     return false;
 }
 
-template <class Hndl>
-std::string get_error(int hndl_type, Hndl hndl)
-{
-    std::ostringstream ss;
-    SQLLEN n = 0;
-    SQLGetDiagField(hndl_type, hndl, 0, SQL_DIAG_NUMBER, &n, 0, 0);
-
-    for (int i = 0; i < n; i++)
-    {
-        SQLCHAR sqlstate[6];
-        SQLCHAR msg[SQL_MAX_MESSAGE_LENGTH];
-        SQLINTEGER native_error;
-        SQLSMALLINT msglen = 0;
-
-        if (SQLGetDiagRec(hndl_type, hndl, i + 1, sqlstate, &native_error,
-                          msg, sizeof(msg), &msglen) != SQL_NO_DATA)
-        {
-            ss << "#" << sqlstate << ": " << native_error << ", " << msg;
-        }
-    }
-
-    return ss.str();
-}
-
 std::vector<ColumnInfo> ODBC::get_headers(int columns)
 {
     std::vector<ColumnInfo> cols;
@@ -959,49 +1049,36 @@ std::vector<ColumnInfo> ODBC::get_headers(int columns)
             info.data_type = data_type;
             info.digits = digits;
             info.nullable = nullable;
-            info.type = sql_to_mariadb_type(data_type, colsize);
 
             if (!get_int_attr(i + 1, SQL_DESC_OCTET_LENGTH, &info.buffer_size))
             {
                 debug("Error in SQLColAttribute:", get_error(SQL_HANDLE_STMT, m_stmt));
             }
 
-            debug("Size:", info.size, "Buffer Size:", info.buffer_size);
-
             cols.push_back(std::move(info));
         }
         else if (ret == SQL_ERROR)
         {
-            debug("At", i);
             m_error = get_error(SQL_HANDLE_STMT, m_stmt);
             SQLCloseCursor(m_stmt);
             return {};
         }
-        else
-        {
-            debug("get_headers", ret_to_str(ret));
-        }
-
-        debug("Column", i, ": ", name);
     }
-
-    debug("=========================== get_headers() =================");
 
     return cols;
 }
 
-std::optional<ODBC::Result> ODBC::get_normal_result(int columns)
+bool ODBC::get_normal_result(int columns, ODBC::Output *handler)
 {
-    debug("get_normal_result Columns:", columns);
-    Result rval;
     SQLRETURN ret;
     ResultBuffer res(m_columns);
-    int64_t rownum = 0;
 
     if (debug_enabled())
     {
         print_columns(m_columns);
     }
+
+    bool ok = true;
 
     while (SQL_SUCCEEDED(ret = SQLFetch(m_stmt)))
     {
@@ -1012,56 +1089,26 @@ std::optional<ODBC::Result> ODBC::get_normal_result(int columns)
             auto &c = res.columns[i];
             ret = SQLGetData(m_stmt, i + 1, c.buffer_type, c.buffers.data(), c.buffers.size(), c.indicators.data());
 
-            debug("SQLGetData:", ret_to_str(ret), m_stmt, i + 1, c_type_to_str(c.buffer_type));
-
             while (ret == SQL_SUCCESS_WITH_INFO && data_truncation())
             {
-                debug("DATA TRUNCATION");
                 auto old_size = c.buffers.size() - 1; // Minus one since these are null-terminated strings
                 c.buffers.resize(c.indicators.front());
                 c.buffer_size = c.buffers.size();
                 ret = SQLGetData(m_stmt, i + 1, c.buffer_type, c.buffers.data() + old_size, c.buffers.size() - old_size, c.indicators.data());
-
-                debug("SQLGetData append:", ret_to_str(ret));
             }
 
-            if (SQL_SUCCEEDED(ret))
+            if (ret == SQL_ERROR)
             {
-                if (!m_output)
-                {
-                    if (c.is_null(0))
-                    {
-                        debug("Row", i, m_columns[i].name, ": NULL");
-                    }
-                    else
-                    {
-                        row[i] = c.to_string(0);
-                        debug("Row", i, m_columns[i].name, ":", *row[i], "Indicator:", c.indicators.front());
-                    }
-                }
-            }
-            else if (ret == SQL_ERROR)
-            {
-                debug("Row", i);
                 m_error = get_error(SQL_HANDLE_STMT, m_stmt);
-                SQLCloseCursor(m_stmt);
-                return {};
+                ok = false;
+                break;
             }
         }
 
-        ++rownum;
-
-        if (m_output)
+        if (!handler->send(m_columns, res, 1))
         {
-            std::cout << "Send batch: " << 1 << std::endl;
-            if (!m_output->send_batch(m_columns, res, 1))
-            {
-                return {};
-            }
-        }
-        else
-        {
-            rval.push_back(std::move(row));
+            ok = false;
+            break;
         }
     }
 
@@ -1070,16 +1117,14 @@ std::optional<ODBC::Result> ODBC::get_normal_result(int columns)
     if (ret == SQL_ERROR)
     {
         m_error = get_error(SQL_HANDLE_STMT, m_stmt);
+        ok = false;
     }
 
-    debug("======================== get_normal_result() ==============================");
-
-    return rval;
+    return ok;
 }
 
-std::optional<ODBC::Result> ODBC::get_batch_result(int columns)
+bool ODBC::get_batch_result(int columns, ODBC::Output *handler)
 {
-    debug("get_batch_result Columns:", columns);
     ResultBuffer res(m_columns);
 
     if (debug_enabled())
@@ -1104,70 +1149,16 @@ std::optional<ODBC::Result> ODBC::get_batch_result(int columns)
                    res.columns[i].buffer_size, res.columns[i].indicators.data());
     }
 
-    Result rval;
+    bool ok = true;
     SQLRETURN ret;
-    int rownum = 0;
-
-    //
-    // Body
-    //
 
     while (SQL_SUCCEEDED(ret = SQLFetch(m_stmt)))
     {
-        debug("Rows fetched:", rows_fetched, ret_to_str(ret));
-
-        if (ret == SQL_SUCCESS_WITH_INFO)
+        if (!handler->send(m_columns, res, rows_fetched))
         {
-            debug("Info:", get_error(SQL_HANDLE_STMT, m_stmt));
-        }
-
-        if (m_output)
-        {
-            debug("Send batch:", rownum);
-
-            if (!m_output->send_batch(m_columns, res, rows_fetched))
-            {
-                std::cout << "ERROR" << m_output->error() << std::endl;
-                return {};
-            }
-        }
-        else
-        {
-            for (SQLULEN i = 0; i < rows_fetched; i++)
-            {
-                Row row(columns);
-                debug("Row", i, "status:", row_status_to_str(res.row_status[i]));
-
-                if (res.row_status[i] == SQL_ROW_SUCCESS || res.row_status[i] == SQL_ROW_SUCCESS_WITH_INFO)
-                {
-                    for (int c = 0; c < columns; c++)
-                    {
-                        if (res.columns[c].is_null(i))
-                        {
-                            debug("Row", i, "column", c, "NULL");
-                        }
-                        else
-                        {
-                            row[c] = res.columns[c].to_string(i);
-                            debug("Row", i, "column", c, *row[c]);
-                        }
-                    }
-                }
-                else if (res.row_status[i] == SQL_ERROR)
-                {
-                    debug("Row ", i, " failed:", ret_to_str(res.row_status[i]));
-                    m_error = get_error(SQL_HANDLE_STMT, m_stmt);
-                    SQLCloseCursor(m_stmt);
-                    return {};
-                }
-
-                ++rownum;
-
-                if (!m_output)
-                {
-                    rval.push_back(std::move(row));
-                }
-            }
+            std::cout << "ERROR: " << m_output->error() << std::endl;
+            ok = false;
+            break;
         }
     }
 
@@ -1176,24 +1167,10 @@ std::optional<ODBC::Result> ODBC::get_batch_result(int columns)
     if (ret == SQL_ERROR)
     {
         m_error = get_error(SQL_HANDLE_STMT, m_stmt);
+        ok = false;
     }
 
-    return rval;
-}
-
-std::optional<ODBC::Result> ODBC::get_result()
-{
-    SQLSMALLINT columns = 0;
-    SQLRETURN ret = SQLNumResultCols(m_stmt, &columns);
-    debug("get_result", ret_to_str(ret), "columns", columns);
-
-    if (columns > 0)
-    {
-        m_columns = get_headers(columns);
-        return can_batch() ? get_batch_result(columns) : get_normal_result(columns);
-    }
-
-    return Result{};
+    return ok;
 }
 
 bool ODBC::can_batch()
@@ -1203,17 +1180,14 @@ bool ODBC::can_batch()
     {
         size_t buffer_size = 0;
 
-        switch (i.type)
+        switch (i.data_type)
         {
-        case ColumnType::TEXT:
-        case ColumnType::MEDIUMTEXT:
-        case ColumnType::LONGTEXT:
-        case ColumnType::BLOB:
-        case ColumnType::MEDIUMBLOB:
-        case ColumnType::LONGBLOB:
-            // If the result has LOBs in it, the data should be retrieved one row at a time using
-            // SQLGetData instead of using an array to fetch multiple rows at a time.
-            return false;
+        // If the result has LOBs in it, the data should be retrieved one row at a time using
+        // SQLGetData instead of using an array to fetch multiple rows at a time.
+        case SQL_WLONGVARCHAR:
+        case SQL_LONGVARCHAR:
+        case SQL_LONGVARBINARY:
+            return i.size < 16384;
 
         default:
             if (i.size == 0 || i.size > ODBC::MAX_BATCH_SIZE)
@@ -1227,54 +1201,9 @@ bool ODBC::can_batch()
     return true;
 }
 
-bool ODBC::prepare_for_transfer()
+bool ODBC::prepare(const std::string &sql)
 {
-    auto SQL_SETUP = "SET MAX_STATEMENT_TIME=0, SQL_MODE='STRICT_TRANS_TABLES,ANSI_QUOTES', UNIQUE_CHECKS=0, FOREIGN_KEY_CHECKS=0, SQL_NOTES=0, AUTOCOMMIT=0";
-    return !!query(SQL_SETUP);
-}
-
-bool ODBC::setup_transfer(const TableInfo &table)
-{
-    std::cout << table.catalog << "." << table.schema << "." << table.name << std::endl;
-    auto res = columns(table.catalog, "", table.name);
-
-    if (!res)
-    {
-        m_error = "No result for SQLColumns(" + table.catalog + ", " + table.name + ")";
-        return false;
-    }
-
-    std::string query = "INSERT INTO \"" + table.catalog + "\".\"" + table.name + "\"(";
-    bool multiple = false;
-
-    for (const auto &c : *res)
-    {
-        if (std::exchange(multiple, true))
-        {
-            query += ",";
-        }
-
-        query += "`" + c.COLUMN_NAME + "`";
-    }
-
-    query += ") VALUES (";
-    multiple = false;
-
-    for (const auto &c : *res)
-    {
-        if (std::exchange(multiple, true))
-        {
-            query += ",";
-        }
-
-        query += "?";
-    }
-
-    query += ")";
-
-    debug("PREPARE:", query);
-
-    SQLRETURN ret = SQLPrepare(m_stmt, (SQLCHAR *)query.data(), query.size());
+    SQLRETURN ret = SQLPrepare(m_stmt, (SQLCHAR *)sql.data(), sql.size());
 
     if (ret == SQL_SUCCESS_WITH_INFO)
     {
@@ -1285,23 +1214,11 @@ bool ODBC::setup_transfer(const TableInfo &table)
         m_error = get_error(SQL_HANDLE_STMT, m_stmt);
     }
 
-    debug("Result:", ret_to_str(ret));
-
     return SQL_SUCCEEDED(ret);
 }
 
-bool ODBC::finish_transfer(const TableInfo &table)
+bool ODBC::send(const std::vector<ColumnInfo> &metadata, ResultBuffer &res, SQLULEN rows_fetched)
 {
-    return !!query("COMMIT");
-}
-
-bool ODBC::send_batch(const std::vector<ColumnInfo> &metadata, ResultBuffer &res, SQLULEN rows_fetched)
-{
-    if (debug_enabled())
-    {
-        print_columns(metadata);
-    }
-
     SQLLEN params_processed = 0;
     SQLSetStmtAttr(m_stmt, SQL_ATTR_PARAM_BIND_TYPE, (void *)SQL_PARAM_BIND_BY_COLUMN, 0);
     SQLSetStmtAttr(m_stmt, SQL_ATTR_PARAMSET_SIZE, (void *)rows_fetched, 0);
@@ -1316,25 +1233,6 @@ bool ODBC::send_batch(const std::vector<ColumnInfo> &metadata, ResultBuffer &res
                          res.columns[i].indicators.data());
     }
 
-    if (debug_enabled())
-    {
-        // Note: here we could do transformations on the data if needed. Any transformations that are done
-        // must be compatible with the table that was created. This means that the creation of the table
-        // and the transformations done on it must be done by the same component.
-
-        for (int i = 0; i < rows_fetched; i++)
-        {
-            std::cout << "Row " << i << ": ";
-
-            for (size_t c = 0; c < metadata.size(); c++)
-            {
-                std::cout << res.columns[c].to_string(i) << " ";
-            }
-
-            std::cout << std::endl;
-        }
-    }
-
     SQLRETURN ret = SQLExecute(m_stmt);
 
     if (ret == SQL_ERROR)
@@ -1345,10 +1243,6 @@ bool ODBC::send_batch(const std::vector<ColumnInfo> &metadata, ResultBuffer &res
     else if (ret == SQL_SUCCESS_WITH_INFO)
     {
         debug("SQLExecute:", get_error(SQL_HANDLE_STMT, m_stmt));
-    }
-    else
-    {
-        debug("SQLExecute:", ret_to_str(ret), "Processed:", params_processed);
     }
 
     return SQL_SUCCEEDED(ret);

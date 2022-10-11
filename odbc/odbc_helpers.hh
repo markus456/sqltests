@@ -58,6 +58,8 @@ struct CatalogPrimaryKey
 
 ColumnType sql_to_mariadb_type(int data_type, int size);
 
+std::string to_mariadb_type(const CatalogColumn &c);
+
 //
 // Helpers for converting ODBC return values to strings
 //

@@ -3,6 +3,7 @@
 #include "string_utils.hh"
 #include "diagnostics.hh"
 
+#include <mutex>
 #include <utility>
 #include <iostream>
 #include <functional>
@@ -12,7 +13,7 @@ class MariaDBTranslator final : public Translator
 public:
     bool prepare(ODBC &db)
     {
-        return db.query("SET SQL_MODE='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'") && db.query("SET AUTOCOMMIT=0");
+        return db.query("SET SQL_MODE='PIPES_AS_CONCAT'") && db.query("SET AUTOCOMMIT=0");
     }
 
     bool start(ODBC &source, const std::vector<TableInfo> &tables)
@@ -25,7 +26,6 @@ public:
         return !!source.query("START TRANSACTION WITH CONSISTENT SNAPSHOT");
     }
 
-    // Should return the CREATE TABLE statement for the table. Should return an empty value (not an empty string) on error.
     std::vector<std::string> create_table(ODBC &source, const TableInfo &table)
     {
         std::vector<std::string> sql;
@@ -40,102 +40,129 @@ public:
         return sql;
     }
 
-    // Get SQL for creating indexes on the given table
     std::vector<std::string> create_index(ODBC &source, const TableInfo &table)
     {
+        // Already a part of the CREATE TABLE statement
         return {};
     }
 
-    // Called for the main connection after all threads have been successfully started
     bool threads_started(ODBC &source, const std::vector<TableInfo> &tables)
     {
         return !!source.query("UNLOCK TABLES");
     }
 
-    // Should return the SQL needed to read the data from the source.
     std::string select(ODBC &source, const TableInfo &table)
     {
-        return "SELECT * FROM `" + table.catalog + "`.`" + table.name + "`";
+        const char *format = R"(
+SELECT
+  'SELECT ' || GROUP_CONCAT('`' || column_name || '`' ORDER BY ORDINAL_POSITION SEPARATOR ',') ||
+  ' FROM `' || table_name || '`'
+FROM information_schema.columns
+WHERE table_schema = '%s' AND table_name = '%s' AND is_generated = 'NEVER'
+GROUP BY table_schema, table_name;
+)";
+        std::string rval;
+
+        if (auto res = source.query(mxb::string_printf(format, table.catalog.c_str(), table.name.c_str())))
+        {
+            rval = res->front().front().value();
+        }
+
+        return rval;
     }
 
-    // Called when the dump has finished.
+    std::string insert(ODBC &source, const TableInfo &table)
+    {
+        const char *format = R"(
+SELECT
+  'INSERT INTO `' || TABLE_SCHEMA || '`.`' || TABLE_NAME ||
+  '` (' || GROUP_CONCAT('`' || COLUMN_NAME || '`' ORDER BY ORDINAL_POSITION SEPARATOR ',') ||
+  ') VALUES (' || GROUP_CONCAT('?' SEPARATOR ',') || ')'
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE table_schema = '%s' AND table_name = '%s' AND is_generated = 'NEVER'
+GROUP BY table_schema, table_name;
+)";
+        std::string rval;
+
+        if (auto res = source.query(mxb::string_printf(format, table.catalog.c_str(), table.name.c_str())))
+        {
+            rval = res->front().front().value();
+        }
+
+        return rval;
+    }
+
     bool stop_thread(ODBC &source, const TableInfo &table)
     {
         return true;
     }
 };
 
-// Generic ODBC translator, simply looks at the datatypes reported by ODBC and uses them to create the table.
 class PostgresTranslator final : public Translator
 {
 public:
     bool prepare(ODBC &source)
     {
         return true;
+        // return !!source.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ");
     }
 
     bool start(ODBC &source, const std::vector<TableInfo> &tables)
     {
-        return true;
+        std::lock_guard guard(m_lock);
+        bool ok = false;
+
+        if (auto res = source.query("SELECT pg_export_snapshot()"))
+        {
+            m_trx = res->front().front().value();
+            debug("Snapshot:", m_trx);
+            ok = true;
+        }
+
+        // TODO: Acquire shard lock on the tables
+
+        return ok;
     }
 
     bool start_thread(ODBC &source, const TableInfo &table)
     {
-        return true;
+        std::lock_guard guard(m_lock);
+        return !!source.query("SET TRANSACTION SNAPSHOT '" + m_trx + "'");
     }
 
     std::vector<std::string> create_table(ODBC &source, const TableInfo &table)
     {
         const char *CREATE_SQL = R"(
-WITH coldefs AS (
-  SELECT
-    QUOTE_IDENT(column_name) || ' ' ||
-    CASE
-      WHEN data_type LIKE 'timestamp%%' THEN 'TIMESTAMP'
-      WHEN data_type LIKE 'time%%' THEN 'TIME'
-      WHEN data_type = 'jsonb' THEN 'JSON'
-      WHEN column_default LIKE 'nextval%%' THEN 'SERIAL'
-      ELSE data_type
-    END ||
-    COALESCE('(' ||
-      CASE
-        WHEN data_type = 'numeric' THEN numeric_precision || ',' || numeric_scale
-        ELSE CAST(character_maximum_length AS text)
-      END
-    || ')', '') ||
-    CASE
-      WHEN is_nullable = 'YES' THEN ''
-      ELSE ' NOT NULL'
-    END ||
-    CASE
-      WHEN column_default LIKE 'nextval%%' THEN ''
-      WHEN is_generated = 'ALWAYS' THEN ' AS ' || generation_expression
-      ELSE COALESCE(' DEFAULT ' || CASE WHEN data_type = 'text' THEN LEFT(column_default, -6) ELSE column_default END, '')
-    END column_def
-  FROM information_schema.columns
-  WHERE table_schema = '%s' AND table_name = '%s'
-  ORDER BY ordinal_position
+WITH columndefs AS (
+SELECT a.attname || ' ' ||
+  CASE
+    WHEN t.typname = 'jsonb' THEN 'JSON'
+    WHEN t.typname LIKE 'timestamp%%' THEN 'TIMESTAMP'
+    WHEN t.typname LIKE 'time%%' THEN 'TIME'
+    ELSE pg_catalog.format_type(a.atttypid, a.atttypmod)
+  END ||
+  CASE WHEN a.attnotnull THEN ' NOT NULL ' ELSE '' END ||
+  CASE
+    WHEN LEFT(pg_catalog.pg_get_expr(d.adbin, d.adrelid, true), 8) = 'nextval(' THEN 'AUTO_INCREMENT PRIMARY KEY'
+    ELSE COALESCE(CASE WHEN a.attgenerated = '' THEN ' DEFAULT ' ELSE ' AS ' END || '(' || pg_catalog.pg_get_expr(d.adbin, d.adrelid, true) || ')', '')
+  END col
+FROM pg_class c
+  JOIN pg_namespace n ON (n.oid = c.relnamespace)
+  JOIN pg_attribute a ON (a.attrelid = c.oid)
+  JOIN pg_type t ON (t.oid = a.atttypid)
+  JOIN information_schema.columns isc ON (isc.column_name = a.attname AND isc.table_name = c.relname AND isc.table_schema = n.nspname)
+  LEFT JOIN pg_attrdef d ON (d.adrelid = a.attrelid AND d.adnum = a.attnum)
+WHERE a.attnum > 0
+AND n.nspname = 'bookings'
+AND c.relname = 'flights'
+ORDER BY a.attnum
 )
-SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ');' create_sql FROM coldefs;
+SELECT 'CREATE OR REPLACE TABLE `%s` (' || STRING_AGG(col, ', ') || ')' FROM columndefs;
 )";
 
         std::string sql = mxb::string_printf(CREATE_SQL, table.schema.c_str(), table.name.c_str(), table.name.c_str());
 
         debug(sql);
-
-        // std::ostringstream ss;
-
-        // ss << "WITH cols AS"
-        //    << "(SELECT "
-        //    << " QUOTE_IDENT(column_name) || ' ' || "
-        //    << " CASE WHEN data_type LIKE 'timestamp%' THEN 'TIMESTAMP' WHEN data_type LIKE 'time%' THEN 'TIME' ELSE data_type END || "
-        //    << " COALESCE('(' || CASE WHEN data_type = 'numeric' THEN numeric_precision || ',' || numeric_scale ELSE CAST(character_maximum_length AS text) END || ')', '') || "
-        //    << " CASE WHEN is_nullable = 'YES' THEN '' ELSE ' NOT NULL' END || "
-        //    << " CASE WHEN is_generated = 'ALWAYS' THEN ' AS ' || generation_expression ELSE COALESCE(' DEFAULT ' || CASE WHEN data_type = 'text' THEN LEFT(column_default, -6) ELSE column_default END, '') END AS column_def"
-        //    << " FROM information_schema.columns WHERE "
-        //    << " table_schema = '" << table.schema << "' AND table_name = '" << table.name << "' "
-        //    << " ORDER BY ordinal_position) "
-        //    << "SELECT 'CREATE TABLE \"" << table.catalog << "\".\"" << table.name + "\"(' || STRING_AGG(column_def, ', ') || ')' FROM cols;";
 
         if (auto res = source.query(sql); res && !(*res).empty() && !(*res)[0].empty() && (*res)[0][0].has_value())
         {
@@ -153,30 +180,30 @@ SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ');' create_sql 
     std::vector<std::string> create_index(ODBC &source, const TableInfo &table)
     {
         const char *INDEX_SQL = R"(
-  SELECT 
-    'ALTER TABLE `%s` ADD ' ||
-    CASE
-    WHEN BOOL_OR(ix.indisprimary)
-      THEN 'PRIMARY KEY'
-    WHEN BOOL_OR(ix.indisunique)
-      THEN 'UNIQUE INDEX ' || i.relname
-      ELSE 'INDEX ' || i.relname
-    END
-    || '(' || STRING_AGG(a.attname, ',') || ');' index_def
-  FROM pg_class t, pg_class i, pg_index ix, pg_attribute a, pg_namespace n
-  WHERE
-    t.oid = ix.indrelid
-    AND i.oid = ix.indexrelid
-    AND n.oid = t.relnamespace
-    AND a.attrelid = t.oid
-    AND a.attnum = ANY(ix.indkey)
-    AND t.relkind = 'r'
-    AND n.nspname = '%s'
-    AND t.relname = '%s'
-  GROUP BY i.relname, t.relname
+ SELECT
+   'ALTER TABLE `' || t.relname || '` ADD ' ||
+  CASE
+  WHEN BOOL_OR(ix.indisprimary)
+    THEN 'PRIMARY KEY'
+  WHEN BOOL_OR(ix.indisunique)
+    THEN 'UNIQUE INDEX ' || i.relname
+    ELSE 'INDEX ' || i.relname
+  END
+  || '(' || STRING_AGG('`' || a.attname || '`', ',') || ');' index_def
+FROM pg_class t, pg_class i, pg_index ix, pg_attribute a, pg_namespace n
+WHERE
+  t.oid = ix.indrelid
+  AND i.oid = ix.indexrelid
+  AND n.oid = t.relnamespace
+  AND a.attrelid = t.oid
+  AND a.attnum = ANY(ix.indkey)
+  AND t.relkind = 'r'
+  AND n.nspname = '%s'
+  AND t.relname = '%s'
+GROUP BY i.relname, t.relname;
 )";
 
-        std::string sql = mxb::string_printf(INDEX_SQL, table.name.c_str(), table.schema.c_str(), table.name.c_str());
+        std::string sql = mxb::string_printf(INDEX_SQL, table.schema.c_str(), table.name.c_str());
         std::vector<std::string> rval;
 
         debug(sql);
@@ -197,93 +224,62 @@ SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ');' create_sql 
         }
 
         return rval;
-
-        //
-        // A "generic" approach that uses the ODBC catalog functions to derive the indexes
-        //
-
-        // struct Index
-        // {
-        //     std::map<int, std::string> columns;
-        //     bool unique = false;
-        //     bool primary = false;
-        // };
-
-        // std::map<std::string, Index> indexes;
-
-        // if (auto res = source.statistics(table.catalog, table.schema, table.name))
-        // {
-        //     for (const auto &idx : res.value())
-        //     {
-        //         if (!idx.INDEX_NAME.empty())
-        //         {
-        //             auto &i = indexes[idx.INDEX_NAME];
-        //             i.columns[idx.ORDINAL_POSITION] = idx.COLUMN_NAME;
-
-        //             if (!idx.NON_UNIQUE)
-        //             {
-        //                 i.unique = true;
-        //             }
-        //         }
-        //     }
-        // }
-
-        // if (auto res = source.primary_keys(table.catalog, table.schema, table.name))
-        // {
-        //     for (const auto &pk : res.value())
-        //     {
-        //         if (auto it = indexes.find(pk.PK_NAME); it != indexes.end())
-        //         {
-        //             it->second.primary = true;
-        //         }
-        //     }
-        // }
-        // else
-        // {
-        //     std::cout << "PRIMARY KEYS FAILED: " << source.error() << std::endl;
-        // }
-
-        // std::vector<std::string> rval;
-        // std::ostringstream ss;
-        // ss << "ALTER TABLE \"" << table.catalog << "\".\"" << table.name << "\" ";
-
-        // for (const auto &[name, idx] : indexes)
-        // {
-        //     ss << "ADD ";
-
-        //     if (idx.primary)
-        //     {
-        //         ss << "PRIMARY KEY ";
-        //     }
-        //     else if (idx.unique)
-        //     {
-        //         ss << "UNIQUE INDEX ";
-        //     }
-        //     else
-        //     {
-        //         ss << "INDEX";
-        //     }
-
-        //     ss << "(" << mxb::transform_join(idx.columns, std::mem_fn(&decltype(idx.columns)::value_type::second), ",") << ")";
-
-        //     rval.push_back(ss.str());
-        // }
-
-        // return rval;
     }
 
-    // Called for the main connection after all threads have been successfully started
     bool threads_started(ODBC &source, const std::vector<TableInfo> &tables)
     {
+        // TODO: Unlock the tables
         return true;
     }
 
     std::string select(ODBC &source, const TableInfo &table)
     {
-        return "SELECT * FROM \"" + table.catalog + "\".\"" + table.schema + "\".\"" + table.name + "\"";
+        const char *format = R"(
+SELECT
+  'SELECT ' || STRING_AGG(QUOTE_IDENT(column_name), ',' ORDER BY ordinal_position) ||
+  ' FROM ' || QUOTE_IDENT(table_schema) || '.' || QUOTE_IDENT(table_name)
+FROM information_schema.columns
+WHERE table_schema = '%s' AND table_name = '%s' AND is_generated = 'NEVER'
+GROUP BY table_schema, table_name
+)";
+
+        std::string rval;
+
+        if (auto res = source.query(mxb::string_printf(format, table.schema.c_str(), table.name.c_str())))
+        {
+            rval = res->front().front().value();
+        }
+
+        return rval;
     }
 
-    // Called when the dump has finished.
+    std::string insert(ODBC &source, const TableInfo &table)
+    {
+        const char *format = R"(
+SELECT
+  'INSERT INTO `' || table_name || '`(' ||
+  STRING_AGG(QUOTE_IDENT(column_name), ',' ORDER BY ordinal_position) ||
+  ') VALUES (' || STRING_AGG('?', ',') || ')'
+FROM information_schema.columns
+WHERE table_schema = '%s' AND table_name = '%s' AND is_generated = 'NEVER'
+GROUP BY table_schema, table_name
+)";
+
+        std::string rval;
+        std::string sql = mxb::string_printf(format, table.schema.c_str(), table.name.c_str());
+
+        if (auto res = source.query(sql))
+        {
+            rval = res->front().front().value();
+        }
+        else
+        {
+            debug("INSERT", source.error(), ":", sql);
+        }
+
+        return rval;
+    }
+
     bool stop_thread(ODBC &source, const TableInfo &table)
     {
         return true;
@@ -291,6 +287,168 @@ SELECT 'CREATE TABLE `%s` (' || STRING_AGG(column_def, ', ') || ');' create_sql 
 
 private:
     std::string m_trx;
+    std::mutex m_lock;
+};
+
+//
+// A generic translator that uses the ODBC catalog functions to derive the column types and indexes
+//
+class GenericTranslator final : public Translator
+{
+public:
+    bool prepare(ODBC &db)
+    {
+        return true;
+    }
+
+    bool start(ODBC &source, const std::vector<TableInfo> &tables)
+    {
+        return true;
+    }
+
+    bool start_thread(ODBC &source, const TableInfo &table)
+    {
+        return true;
+    }
+
+    // Should return the CREATE TABLE statement for the table. Should return an empty value (not an empty string) on error.
+    std::vector<std::string> create_table(ODBC &source, const TableInfo &table)
+    {
+        if (auto res = source.columns(table.catalog, table.schema, table.name))
+        {
+            std::stringstream ss;
+            bool more = false;
+
+            for (const auto &c : *res)
+            {
+                if (std::exchange(more, true))
+                {
+                    ss << ",";
+                }
+
+                ss << "`" << c.COLUMN_NAME << "` " << to_mariadb_type(c);
+            }
+
+            return {"CREATE TABLE " + table.name + " (" + ss.str() + ")"};
+        }
+
+        return {};
+    }
+
+    std::vector<std::string> create_index(ODBC &source, const TableInfo &table)
+    {
+        struct Index
+        {
+            std::map<int, std::string> columns;
+            bool unique = false;
+            bool primary = false;
+        };
+
+        std::map<std::string, Index> indexes;
+
+        if (auto res = source.statistics(table.catalog, table.schema, table.name))
+        {
+            for (const auto &idx : res.value())
+            {
+                if (!idx.INDEX_NAME.empty())
+                {
+                    auto &i = indexes[idx.INDEX_NAME];
+                    i.columns[idx.ORDINAL_POSITION] = idx.COLUMN_NAME;
+
+                    if (!idx.NON_UNIQUE)
+                    {
+                        i.unique = true;
+                    }
+                }
+            }
+        }
+
+        if (auto res = source.primary_keys(table.catalog, table.schema, table.name))
+        {
+            for (const auto &pk : res.value())
+            {
+                if (auto it = indexes.find(pk.PK_NAME); it != indexes.end())
+                {
+                    it->second.primary = true;
+                }
+            }
+        }
+        else
+        {
+            std::cout << "PRIMARY KEYS FAILED: " << source.error() << std::endl;
+        }
+
+        std::vector<std::string> rval;
+        std::ostringstream ss;
+        ss << "ALTER TABLE \"" << table.catalog << "\".\"" << table.name << "\" ";
+
+        for (const auto &[name, idx] : indexes)
+        {
+            ss << "ADD ";
+
+            if (idx.primary)
+            {
+                ss << "PRIMARY KEY ";
+            }
+            else if (idx.unique)
+            {
+                ss << "UNIQUE INDEX ";
+            }
+            else
+            {
+                ss << "INDEX";
+            }
+
+            ss << "(" << mxb::transform_join(idx.columns, std::mem_fn(&decltype(idx.columns)::value_type::second), ",") << ")";
+
+            rval.push_back(ss.str());
+        }
+
+        return rval;
+    }
+
+    bool threads_started(ODBC &source, const std::vector<TableInfo> &tables)
+    {
+        return true;
+    }
+
+    std::string select(ODBC &source, const TableInfo &table)
+    {
+        return "SELECT * FROM " + table.schema + "." + table.name;
+    }
+
+    std::string insert(ODBC &source, const TableInfo &table)
+    {
+        auto res = source.columns(table.catalog, table.schema, table.name);
+
+        if (!res)
+        {
+            return "";
+        }
+
+        std::string fields;
+        std::string values;
+        bool multiple = false;
+
+        for (const auto &c : *res)
+        {
+            if (std::exchange(multiple, true))
+            {
+                fields += ",";
+                values += ",";
+            }
+
+            fields += c.COLUMN_NAME;
+            values += "?";
+        }
+
+        return "INSERT INTO " + table.catalog + "." + table.name + "(" + fields + ") VALUES (" + values + ")";
+    }
+
+    bool stop_thread(ODBC &source, const TableInfo &table)
+    {
+        return true;
+    }
 };
 
 std::unique_ptr<Translator> create_translator(Source type)
@@ -302,6 +460,9 @@ std::unique_ptr<Translator> create_translator(Source type)
 
     case Source::POSTGRES:
         return std::make_unique<PostgresTranslator>();
+
+    case Source::GENERIC:
+        return std::make_unique<GenericTranslator>();
     }
 
     return nullptr;

@@ -8,6 +8,7 @@ enum class Source
 {
     POSTGRES,
     MARIADB,
+    GENERIC
 };
 
 // The list of MariaDB-specific types that the source tables must be mapped to
@@ -53,8 +54,7 @@ enum class ColumnType
 struct ColumnInfo
 {
     std::string name;
-    int data_type = 0;                     // ODBC data type
-    ColumnType type = ColumnType::UNKNOWN; // MariaDB native type
+    int data_type = 0; // ODBC data type
     size_t size = 0;
     size_t buffer_size = 0;
     int digits = 0;
@@ -103,6 +103,12 @@ struct Translator
 
     // Should return the SQL needed to read the data from the source.
     virtual std::string select(ODBC &source, const TableInfo &table) = 0;
+
+    // Should return the SQL needed to insert the data into MariaDB and must
+    // be of the form `INSERT INTO table(columns ...) VALUE (values...)`.
+    // The INSERT must be directly compatible with the resultset of the SELECT
+    // statement used to read the data.
+    virtual std::string insert(ODBC &source, const TableInfo &table) = 0;
 
     // Called when the dump has finished and all data has been loaded. This step should be used to handle index creation.
     virtual bool stop_thread(ODBC &source, const TableInfo &table) = 0;
