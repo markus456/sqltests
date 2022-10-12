@@ -359,7 +359,6 @@ std::string ResultBuffer::Column::to_string(int row) const
     default:
         if (len != SQL_NULL_DATA)
         {
-            debug("Data at row", row, ":", (const char *)ptr, "Length:", len);
             rval.assign((const char *)ptr, len);
         }
         else
@@ -702,7 +701,7 @@ void ODBC::print_columns(const std::vector<ColumnInfo> &columns)
     }
 
     std::string line = "+";
-    line.append(len * 6 + 5 + 1 - 2, '-');
+    line.append(len * 6 + 6 + 1 - 2, '-');
     line += "+";
 
     std::cout << line << std::endl;
@@ -800,11 +799,6 @@ std::optional<std::string> ODBC::get_by_name(const Row &row, std::string name)
     }
 
     return {};
-}
-
-void ODBC::set_output(ODBC *other)
-{
-    m_output = other;
 }
 
 int64_t ODBC::as_int(const Value &val) const
@@ -907,7 +901,7 @@ void copy_table(std::string src_dsn, std::string dest_dsn, std::unique_ptr<Trans
             throw FatalError("Could not get SQL for SELECT for table", tbl.name);
         }
 
-        std::cout << "Starting dump" << std::endl;
+        std::cout << "Starting dump of " << tbl.schema << "." << tbl.name << std::endl;
         auto start = std::chrono::steady_clock::now();
 
         debug("SELECT:", sql);
@@ -924,7 +918,7 @@ void copy_table(std::string src_dsn, std::string dest_dsn, std::unique_ptr<Trans
         }
         else if (!src->stream(sql, dest.get()))
         {
-            throw FatalError("Streaming data failed:", src->error());
+            throw FatalError("Streaming data failed:", src->error(), dest->error());
         }
         else if (!dest->commit())
         {
@@ -972,6 +966,7 @@ std::optional<ODBC::Result> ODBC::read_response(SQLRETURN ret)
 
 bool ODBC::process_response(SQLRETURN ret, ODBC::Output *handler)
 {
+    assert(handler);
     bool ok = false;
     debug("read_response:", ret_to_str(ret));
 
@@ -1156,7 +1151,6 @@ bool ODBC::get_batch_result(int columns, ODBC::Output *handler)
     {
         if (!handler->send(m_columns, res, rows_fetched))
         {
-            std::cout << "ERROR: " << m_output->error() << std::endl;
             ok = false;
             break;
         }
@@ -1219,6 +1213,24 @@ bool ODBC::prepare(const std::string &sql)
 
 bool ODBC::send(const std::vector<ColumnInfo> &metadata, ResultBuffer &res, SQLULEN rows_fetched)
 {
+    if (debug_enabled())
+    {
+        for (SQLULEN i = 0; i < rows_fetched; i++)
+        {
+            if (res.row_status[i] == SQL_ROW_SUCCESS || res.row_status[i] == SQL_ROW_SUCCESS_WITH_INFO)
+            {
+                std::ostringstream ss;
+
+                for (int c = 0; c < metadata.size(); c++)
+                {
+                    ss << res.columns[c].to_string(i) << " ";
+                }
+
+                debug("Row", i, ss.str());
+            }
+        }
+    }
+
     SQLLEN params_processed = 0;
     SQLSetStmtAttr(m_stmt, SQL_ATTR_PARAM_BIND_TYPE, (void *)SQL_PARAM_BIND_BY_COLUMN, 0);
     SQLSetStmtAttr(m_stmt, SQL_ATTR_PARAMSET_SIZE, (void *)rows_fetched, 0);

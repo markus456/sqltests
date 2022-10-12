@@ -145,8 +145,6 @@ public:
     // Functions for table copying
     //
 
-    void set_output(ODBC *other);
-
 private:
     template <class Hndl>
     std::string get_error(int hndl_type, Hndl hndl)
@@ -219,7 +217,6 @@ private:
     SQLHSTMT m_stmt;
     std::string m_dsn;
     std::string m_error;
-    ODBC *m_output = nullptr;
 
     std::unique_ptr<Translator> m_translator;
 
