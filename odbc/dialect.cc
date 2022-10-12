@@ -134,33 +134,56 @@ public:
     {
         const char *CREATE_SQL = R"(
 WITH columndefs AS (
-SELECT a.attname || ' ' ||
+SELECT '`' || a.attname || '` ' ||
   CASE
     WHEN t.typname = 'jsonb' THEN 'JSON'
     WHEN t.typname LIKE 'timestamp%%' THEN 'TIMESTAMP'
     WHEN t.typname LIKE 'time%%' THEN 'TIME'
+    WHEN t.typname IN ('line', 'lseg', 'box', 'circle') THEN 'TEXT'
     ELSE pg_catalog.format_type(a.atttypid, a.atttypmod)
   END ||
   CASE WHEN a.attnotnull THEN ' NOT NULL ' ELSE '' END ||
   CASE
-    WHEN LEFT(pg_catalog.pg_get_expr(d.adbin, d.adrelid, true), 8) = 'nextval(' THEN 'AUTO_INCREMENT PRIMARY KEY'
+    WHEN LEFT(pg_catalog.pg_get_expr(d.adbin, d.adrelid, true), 8) = 'nextval(' THEN 'AUTO_INCREMENT'
     ELSE COALESCE(CASE WHEN a.attgenerated = '' THEN ' DEFAULT ' ELSE ' AS ' END || '(' || pg_catalog.pg_get_expr(d.adbin, d.adrelid, true) || ')', '')
   END col
 FROM pg_class c
   JOIN pg_namespace n ON (n.oid = c.relnamespace)
   JOIN pg_attribute a ON (a.attrelid = c.oid)
   JOIN pg_type t ON (t.oid = a.atttypid)
-  JOIN information_schema.columns isc ON (isc.column_name = a.attname AND isc.table_name = c.relname AND isc.table_schema = n.nspname)
   LEFT JOIN pg_attrdef d ON (d.adrelid = a.attrelid AND d.adnum = a.attnum)
 WHERE a.attnum > 0
-AND n.nspname = 'bookings'
-AND c.relname = 'flights'
+AND n.nspname = '%s'
+AND c.relname = '%s'
 ORDER BY a.attnum
+), indexdefs AS(
+SELECT
+  CASE
+    WHEN BOOL_OR(ix.indisprimary) THEN 'PRIMARY KEY'
+    WHEN BOOL_OR(ix.indisunique) THEN 'UNIQUE KEY `' || i.relname || '`'
+    ELSE 'KEY `' || i.relname || '`'
+  END
+  || '(' || STRING_AGG('`' || a.attname || '`', ', ') || ')' idx
+FROM pg_class t, pg_class i, pg_index ix, pg_attribute a, pg_namespace n
+WHERE
+  t.oid = ix.indrelid
+  AND i.oid = ix.indexrelid
+  AND n.oid = t.relnamespace
+  AND a.attrelid = t.oid
+  AND a.attnum = ANY(ix.indkey)
+  AND t.relkind = 'r'
+  AND n.nspname = '%s'
+  AND t.relname = '%s'
+GROUP BY i.relname, t.relname
+), columndefs_concat AS (
+    SELECT STRING_AGG(col, ', ') c FROM columndefs
+), indexdefs_concat AS (
+    SELECT STRING_AGG(idx, ', ') i FROM indexdefs
 )
-SELECT 'CREATE OR REPLACE TABLE `%s` (' || STRING_AGG(col, ', ') || ')' FROM columndefs;
+SELECT 'CREATE OR REPLACE TABLE `%s` (' || c.c || COALESCE(', ' || i.i, '') || ')' FROM columndefs_concat c, indexdefs_concat i;
 )";
 
-        std::string sql = mxb::string_printf(CREATE_SQL, table.schema.c_str(), table.name.c_str(), table.name.c_str());
+        std::string sql = mxb::string_printf(CREATE_SQL, table.schema.c_str(), table.name.c_str(), table.schema.c_str(), table.name.c_str(), table.name.c_str());
 
         debug(sql);
 
@@ -179,51 +202,7 @@ SELECT 'CREATE OR REPLACE TABLE `%s` (' || STRING_AGG(col, ', ') || ')' FROM col
     // Get SQL for creating indexes on the given table
     std::vector<std::string> create_index(ODBC &source, const TableInfo &table)
     {
-        const char *INDEX_SQL = R"(
- SELECT
-   'ALTER TABLE `' || t.relname || '` ADD ' ||
-  CASE
-  WHEN BOOL_OR(ix.indisprimary)
-    THEN 'PRIMARY KEY'
-  WHEN BOOL_OR(ix.indisunique)
-    THEN 'UNIQUE INDEX ' || i.relname
-    ELSE 'INDEX ' || i.relname
-  END
-  || '(' || STRING_AGG('`' || a.attname || '`', ',') || ');' index_def
-FROM pg_class t, pg_class i, pg_index ix, pg_attribute a, pg_namespace n
-WHERE
-  t.oid = ix.indrelid
-  AND i.oid = ix.indexrelid
-  AND n.oid = t.relnamespace
-  AND a.attrelid = t.oid
-  AND a.attnum = ANY(ix.indkey)
-  AND t.relkind = 'r'
-  AND n.nspname = '%s'
-  AND t.relname = '%s'
-GROUP BY i.relname, t.relname;
-)";
-
-        std::string sql = mxb::string_printf(INDEX_SQL, table.schema.c_str(), table.name.c_str());
-        std::vector<std::string> rval;
-
-        debug(sql);
-
-        if (auto res = source.query(sql); res && !res->empty() && !res->front().empty())
-        {
-            for (auto &val : res.value())
-            {
-                if (val.front().has_value())
-                {
-                    rval.push_back(std::move(val.front().value()));
-                }
-            }
-        }
-        else
-        {
-            std::cout << "Failed to read index definitions: " << source.error() << std::endl;
-        }
-
-        return rval;
+        return {};
     }
 
     bool threads_started(ODBC &source, const std::vector<TableInfo> &tables)
@@ -236,7 +215,12 @@ GROUP BY i.relname, t.relname;
     {
         const char *format = R"(
 SELECT
-  'SELECT ' || STRING_AGG(QUOTE_IDENT(column_name), ',' ORDER BY ordinal_position) ||
+  'SELECT ' || STRING_AGG(
+CASE
+  WHEN data_type IN ('point', 'path', 'polygon') THEN 'ST_AsText(CAST(' || QUOTE_IDENT(column_name) || ' AS GEOMETRY))'
+  WHEN data_type IN ('geometry') THEN 'ST_AsText(' || QUOTE_IDENT(column_name) || ')'
+  ELSE QUOTE_IDENT(column_name)
+END, ',' ORDER BY ordinal_position) ||
   ' FROM ' || QUOTE_IDENT(table_schema) || '.' || QUOTE_IDENT(table_name)
 FROM information_schema.columns
 WHERE table_schema = '%s' AND table_name = '%s' AND is_generated = 'NEVER'
@@ -259,7 +243,11 @@ GROUP BY table_schema, table_name
 SELECT
   'INSERT INTO `' || table_name || '`(' ||
   STRING_AGG(QUOTE_IDENT(column_name), ',' ORDER BY ordinal_position) ||
-  ') VALUES (' || STRING_AGG('?', ',') || ')'
+  ') VALUES (' || STRING_AGG(
+CASE
+  WHEN data_type IN ('point', 'path', 'polygon', 'geometry') THEN 'ST_GeomFromText(?)'
+  ELSE '?'
+END, ',' ORDER BY ordinal_position) || ')'
 FROM information_schema.columns
 WHERE table_schema = '%s' AND table_name = '%s' AND is_generated = 'NEVER'
 GROUP BY table_schema, table_name
