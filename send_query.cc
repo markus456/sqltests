@@ -1,6 +1,7 @@
 #include <mysql.h>
 #include <string>
 #include <iostream>
+#include "common.hh"
 
 const char* user = "maxuser";
 const char* password = "maxpwd";
@@ -8,71 +9,62 @@ const char* db = "test";
 const char* host = "127.0.0.1";
 int port = 3000;
 
-#define USE_ASYNC 0
+#define USE_ASYNC 1
+int NUM_CLIENTS = 100;
+int NUM_QUERIES = 1000;
 
 int main(int argc, char** argv)
 {
-    MYSQL* c = mysql_init(nullptr);
-
-    if (!mysql_real_connect(c, host, user, password, db, port, nullptr, 0))
+    auto cnf = parse(argc, argv);
+    std::vector<MYSQL*> clients;
+    
+    for (int i = 0; i < NUM_CLIENTS; i++)
     {
-        std::cout << "Connect: " << mysql_error(c) << std::endl;
+        MYSQL* c = mysql_init(nullptr);
+
+        if (!mysql_real_connect(c, cnf.host, cnf.user, cnf.password, cnf.db, cnf.port, nullptr, 0))
+        {
+            std::cout << "Failed to connect: " << mysql_error(c) << std::endl;
+            mysql_close(c);
+        }
+        else
+        {   
+            clients.push_back(c);
+        }
     }
-    else
+
+    for (MYSQL* c : clients)
     {
-        if (mysql_query(c, "BEGIN"))
-        {
-            std::cout << "BEGIN: " << mysql_error(c) << std::endl;
-        }
+        std::string query = "SELECT 1";
 
-        std::string query = "SELECT * FROM test.t1 FOR UPDATE";
-
-#if USE_ASYNC
-        if (mysql_send_query(c, query.c_str(), query.length()))
+        for (int i = 0; i < NUM_QUERIES; i++)
         {
-            std::cout << "mysql_send_query: " << mysql_error(c) << std::endl;
-        }
-
-        std::cout << "Press enter to continue..." << std::endl;
-        std::string line;
-        std::getline(std::cin, line);
-
-        if (mysql_read_query_result(c))
-        {
-            std::cout << "mysql_read_query_result: " << mysql_error(c) << std::endl;
-        }
-        else
-        {
-            mysql_free_result(mysql_use_result(c));
-        }
-#else
-        if (mysql_real_query(c, query.c_str(), query.length()))
-        {
-            std::cout << "mysql_real_query: " << mysql_error(c) << std::endl;
-        }
-        else
-        {
-            if (auto* res = mysql_use_result(c))
+            if (mysql_send_query(c, query.c_str(), query.length()))
             {
-                int i = 0;
-                
-                while (auto row = mysql_fetch_row(res))
-                {
-                    ++i;
-                }
+                std::cout << "mysql_send_query: " << mysql_error(c) << std::endl;
+            }
+        }
+    }
 
-                std::cout << "Got result (" << i << " rows): " << mysql_errno(c) << ", " << mysql_error(c) << std::endl;
-                
-                mysql_free_result(res);
+    for (MYSQL* c : clients)
+    {
+        for (int i = 0; i < NUM_QUERIES; i++)
+        {     
+            if (mysql_read_query_result(c))
+            {
+                std::cout << "mysql_read_query_result: " << mysql_error(c) << std::endl;
             }
             else
             {
-                std::cout << "No result: " << mysql_error(c) << std::endl;
+                mysql_free_result(mysql_use_result(c));
             }
         }
-#endif
     }
-
-    mysql_close(c);
+    
+    for (MYSQL* c : clients)
+    {
+        mysql_close(c);
+    }
+    
     return 0;
 }

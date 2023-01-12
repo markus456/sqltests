@@ -14,6 +14,7 @@ struct Config
     const char *db = "test";
     const char *host = "127.0.0.1";
     int port = 4006;
+    int timeout = 30;
     bool debug = false;
     std::string dsn1;
     std::string dsn2;
@@ -25,7 +26,7 @@ static inline Config parse(int argc, char **argv)
 {
     Config c;
     int opt;
-    const char accepted_opts[] = "u:p:h:D:P:d1:2:";
+    const char accepted_opts[] = "?u:p:h:D:P:d1:2:t:";
 
     while ((opt = getopt(argc, argv, accepted_opts)) != -1)
     {
@@ -60,6 +61,11 @@ static inline Config parse(int argc, char **argv)
             c.dsn2 = optarg;
             break;
 
+        case 't':
+            c.timeout = atoi(optarg);
+            break;
+            
+        case '?':
         default:
             std::cout << "Unknown option: " << (char)opt << std::endl;
             std::cout <<
@@ -73,6 +79,7 @@ static inline Config parse(int argc, char **argv)
 -d Debug mode
 )"
                       << std::endl;
+            exit(0);
             break;
         }
     }

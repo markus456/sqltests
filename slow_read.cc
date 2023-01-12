@@ -2,6 +2,7 @@
 #include <string>
 #include <iostream>
 #include <unistd.h>
+#include "common.hh"
 
 const char* user = "maxuser";
 const char* password = "maxpwd";
@@ -11,15 +12,18 @@ int port = 4006;
 
 int main(int argc, char** argv)
 {
-    if (argc < 2)
+    auto cnf = parse(argc, argv);
+
+    if (cnf.args.size() < 1)
     {
         std::cout << "USAGE: QUERY [SLEEP]" << std::endl;;
+        return 1;
     }
 
-    int dur = argc < 3 ? 1 : atoi(argv[2]);
+    int dur = cnf.args.size() > 1 ? std::stoi(cnf.args[1]) : 1;
     MYSQL* c = mysql_init(nullptr);
 
-    if (!mysql_real_connect(c, host, user, password, db, port, nullptr, 0))
+    if (!mysql_real_connect(c, cnf.host, cnf.user, cnf.password, cnf.db, cnf.port, nullptr, 0))
     {
         std::cout << "Connect: " << mysql_error(c) << std::endl;
     }

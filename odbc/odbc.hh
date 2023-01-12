@@ -9,6 +9,7 @@
 #include <sql.h>
 #include <sqlext.h>
 
+#include "diagnostics.hh"
 #include "dialect.hh"
 #include "odbc_helpers.hh"
 
@@ -151,10 +152,12 @@ private:
     {
         std::ostringstream ss;
         SQLLEN n = 0;
-        SQLGetDiagField(hndl_type, hndl, 0, SQL_DIAG_NUMBER, &n, 0, 0);
+        SQLRETURN ret = SQLGetDiagField(hndl_type, hndl, 0, SQL_DIAG_NUMBER, &n, 0, 0);
+        debug("num diag:", n, "ret:", ret_to_str(ret));
 
         for (int i = 0; i < n; i++)
         {
+            debug("diag num", i);
             SQLCHAR sqlstate[6];
             SQLCHAR msg[SQL_MAX_MESSAGE_LENGTH];
             SQLINTEGER native_error;

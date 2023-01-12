@@ -663,7 +663,7 @@ std::optional<std::vector<CatalogColumn>> ODBC::columns(std::string catalog, std
     }
     else
     {
-        debug("Columns in SQLColumns:", m_columns.size(), "Return:", ret_to_str(ret));
+        debug("Columns in SQLColumns:", m_columns.size(), "Return:", ret_to_str(ret), "Has value:", result.has_value() ? "Yes" : "No");
     }
 
     return {};
@@ -960,6 +960,10 @@ std::optional<ODBC::Result> ODBC::read_response(SQLRETURN ret)
     {
         rval = result.result;
     }
+    else
+    {
+        debug("process_response failed");
+    }
 
     return rval;
 }
@@ -983,6 +987,7 @@ bool ODBC::process_response(SQLRETURN ret, ODBC::Output *handler)
         else if (columns > 0)
         {
             m_columns = get_headers(columns);
+            debug("can_batch:", can_batch() ? "Yes" : "No");
             ok = can_batch() ? get_batch_result(columns, handler) : get_normal_result(columns, handler);
         }
     }
@@ -1124,6 +1129,7 @@ bool ODBC::get_batch_result(int columns, ODBC::Output *handler)
 
     if (debug_enabled())
     {
+        debug("get_batch_result", columns, "columns");
         print_columns(m_columns);
     }
 
@@ -1147,8 +1153,12 @@ bool ODBC::get_batch_result(int columns, ODBC::Output *handler)
     bool ok = true;
     SQLRETURN ret;
 
+    debug("BEFORE FETCH");
+
     while (SQL_SUCCEEDED(ret = SQLFetch(m_stmt)))
     {
+        debug("Rows fetched:", rows_fetched);
+
         if (!handler->send(m_columns, res, rows_fetched))
         {
             ok = false;
@@ -1161,7 +1171,21 @@ bool ODBC::get_batch_result(int columns, ODBC::Output *handler)
     if (ret == SQL_ERROR)
     {
         m_error = get_error(SQL_HANDLE_STMT, m_stmt);
+        if (m_error.empty())
+        {
+            m_error = get_error(SQL_HANDLE_DBC, m_conn);
+        }
+        
+        debug("ERROR:", m_error);
         ok = false;
+    }
+    else if (ret == SQL_SUCCESS_WITH_INFO)
+    {
+        debug("Got warnings:", get_error(SQL_HANDLE_STMT, m_stmt));
+    }
+    else
+    {
+        debug("Something else:", ret_to_str(ret));
     }
 
     return ok;

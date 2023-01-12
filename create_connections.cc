@@ -4,26 +4,24 @@
 #include <iostream>
 #include <vector>
 #include <cstring>
-
-const char* user = "maxusers";
-const char* password = "maxpwds";
-const char* db = "test";
-//const char* host = "127.0.0.1";
-const char* host = "192.168.1.48";
-int port = 3000;
+#include "common.hh"
 
 int main(int argc, char** argv)
 {
-    if (argc < 2)
+    auto cnf = parse(argc, argv);
+
+    if (cnf.args.empty())
     {
         std::cout << "Usage: NUM_CONNECTIONS [SLEEP]" << std::endl;
         return 1;
     }
     
-    int n = atoi(argv[1]);
+    int n = atoi(cnf.args[0].c_str());
     std::vector<MYSQL*> connections;
 
-    int time_to_sleep = argc > 2 ? atoi(argv[2]) : 5;
+    int time_to_sleep = cnf.args.size() > 1 ? atoi(cnf.args[1].c_str()) : 5;
+
+    std::cout << "Creating " << n << " connections" << std::endl;
     
     for (int i = 0; i < n; i++)
     {
@@ -33,7 +31,7 @@ int main(int argc, char** argv)
         //mysql_optionsv(connections.back(), MARIADB_OPT_PROXY_HEADER, buf, strlen(buf));
         //free(buf);
     
-        if (!mysql_real_connect(connections.back(), host, user, password, db, port, nullptr, 0))
+        if (!mysql_real_connect(connections.back(), cnf.host, cnf.user, cnf.password, cnf.db, cnf.port, nullptr, 0))
         {
             std::cout << "Connection " << i + 1 << " failed: " << mysql_error(connections.back()) << std::endl;
         }
@@ -47,6 +45,7 @@ int main(int argc, char** argv)
         }
     }
 
+    std::cout << "Sleeping for " << time_to_sleep << " seconds" << std::endl;
 
     sleep(time_to_sleep);
 

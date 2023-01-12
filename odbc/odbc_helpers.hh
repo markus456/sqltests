@@ -56,6 +56,25 @@ struct CatalogPrimaryKey
     std::string PK_NAME;
 };
 
+// The values from SQLForeignKeys: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlforeignkeys-function
+struct CatalogForeignKey
+{
+    std::string PKTABLE_CAT;
+    std::string PKTABLE_SCHEM;
+    std::string PKTABLE_NAME;
+    std::string PKCOLUMN_NAME;
+    std::string FKTABLE_CAT;
+    std::string FKTABLE_SCHEM;
+    std::string FKTABLE_NAME;
+    std::string FKCOLUMN_NAME;
+    int KEY_SEQ;
+    int UPDATE_RULE;
+    int DELETE_RULE;
+    std::string FK_NAME;
+    std::string PK_NAME;
+    int DEFERRABILITY;
+};
+
 ColumnType sql_to_mariadb_type(int data_type, int size);
 
 std::string to_mariadb_type(const CatalogColumn &c);
