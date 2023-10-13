@@ -22,8 +22,14 @@ async function main() {
     target: "odbc",
     connection_string: process.argv[2]
   }
+  const payload_mariadb = {
+    target: "server1",
+    user: "maxuser",
+    password: "maxpwd",
+    db: "test",
+  }
   
-  var res = await axios.post("http://localhost:8989/sql/", payload, opts)
+  var res = await axios.post("http://127.0.0.1:8989/sql/", /*payload*/ payload_mariadb, opts)
   const token = "?token=" + res.data.meta.token
   const connection = res.data.links.self
 

@@ -104,7 +104,7 @@ class ETLTester extends React.Component {
       connection_string: this.state.connection_string
     }
 
-    var res = await axios.post("http://localhost:8989/sql/", payload, opts)
+    var res = await axios.post("http://127.0.0.1:8989/sql/", payload, opts)
 
     this.token= "?token=" + res.data.meta.token
     this.conn = res.data.links.self
@@ -115,7 +115,7 @@ class ETLTester extends React.Component {
       password: this.state.password
     }
     
-    res = await axios.post("http://localhost:8989/sql/", second_payload, opts)
+    res = await axios.post("http://127.0.0.1:8989/sql/", second_payload, opts)
     this.second_token = "?token=" + res.data.meta.token
     this.target_token = "&target_token=" + res.data.meta.token
     this.second_conn = res.data.links.self

@@ -42,7 +42,7 @@ async function compare_existing_results(conn, token){
     db: "test"
   }
     
-  var res = await axios.post("http://localhost:8989/sql/", conn_payload, opts)
+  var res = await axios.post("http://127.0.0.1:8989/sql/", conn_payload, opts)
   const second_token = "?token=" + res.data.meta.token
   const second_conn = res.data.links.self
   const second_id = res.data.data.id
@@ -67,13 +67,13 @@ async function compare_existing_results(conn, token){
 
 async function test_import_with_connection(conn, token){
   const conn_payload = {
-    target: "server1",
+    target: "server4",
     user: "maxuser",
     password: "maxpwd",
     db: "test"
   }
     
-  var res = await axios.post("http://localhost:8989/sql/", conn_payload, opts)
+  var res = await axios.post("http://127.0.0.1:8989/sql/", conn_payload, opts)
   const second_token = "?token=" + res.data.meta.token
   const target_token = "&target_token=" + res.data.meta.token
   const second_conn = res.data.links.self
@@ -88,10 +88,10 @@ async function test_import_with_connection(conn, token){
   if (process.argv[3]){
     tables = JSON.parse(process.argv[3])
   } else {
-    const schema = "bookings"
-    const pg_sql = `SELECT JSON_AGG(JSON_BUILD_OBJECT('schema', TABLE_SCHEMA, 'table', TABLE_NAME)) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${schema}' AND TABLE_NAME NOT IN ('flights') AND TABLE_TYPE = 'BASE TABLE';`
-    const maria_sql = `SELECT JSON_ARRAYAGG(JSON_OBJECT('schema', TABLE_SCHEMA, 'table', TABLE_NAME)) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${schema}' AND TABLE_TYPE = 'BASE TABLE'`
-    res = await exec_query(conn, token, pg_sql)
+    const schema = "test"
+    //const sql = `SELECT JSON_AGG(JSON_BUILD_OBJECT('schema', TABLE_SCHEMA, 'table', TABLE_NAME)) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${schema}' AND TABLE_NAME NOT IN ('flights') AND TABLE_TYPE = 'BASE TABLE';`
+    const sql = `SELECT JSON_ARRAYAGG(JSON_OBJECT('schema', TABLE_SCHEMA, 'table', TABLE_NAME)) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${schema}' AND TABLE_TYPE = 'BASE TABLE'`
+    res = await exec_query(conn, token, sql)
     var tables = JSON.parse(res.data.attributes.results[0].data[0][0])
   }
  
@@ -103,7 +103,9 @@ async function test_import_with_connection(conn, token){
     //type: "generic",
     target: second_id,
     tables: tables,
-    catalog: "demo"
+    catalog: "demo",
+    create_mode: "replace",
+    //threads: 1
   }
   
   console.log("Prepare")
@@ -141,7 +143,8 @@ async function test_import_with_connection(conn, token){
     res = await axios.get(self + token, opts)
   }
 
-  console.log(JSON.stringify(res.data, null, 2))
+  console.log("Execution time: ", res.data.data.attributes.execution_time)
+  //console.log(JSON.stringify(res.data, null, 2))
 
   for (const t of res.data.data.attributes.results.tables) {
     if (t.error){
@@ -150,7 +153,8 @@ async function test_import_with_connection(conn, token){
   }
 
   //await compare_results(conn, token, second_conn, second_token, payload.tables)
-  
+
+  console.log("Deleting second connection")
   await axios.delete(second_conn + second_token, opts)
 
 }
@@ -163,7 +167,7 @@ async function test_import_cancel(conn, token){
     db: "test"
   }
     
-  var res = await axios.post("http://localhost:8989/sql/", conn_payload, opts)
+  var res = await axios.post("http://127.0.0.1:8989/sql/", conn_payload, opts)
   const second_token = "?token=" + res.data.meta.token
   const target_token = "&target_token=" + res.data.meta.token
   const second_conn = res.data.links.self
@@ -262,7 +266,7 @@ async function test_import_prepare_only(conn, token){
     db: "test"
   }
     
-  var res = await axios.post("http://localhost:8989/sql/", conn_payload, opts)
+  var res = await axios.post("http://127.0.0.1:8989/sql/", conn_payload, opts)
   const second_token = "?token=" + res.data.meta.token
   const target_token = "&target_token=" + res.data.meta.token
   const second_conn = res.data.links.self
@@ -419,10 +423,10 @@ async function main() {
     target: "odbc",
     connection_string: process.argv[2]
   }
-  //var res = await axios.get("http://localhost:8989/sql/odbc/drivers", opts)
+  //var res = await axios.get("http://127.0.0.1:8989/sql/odbc/drivers", opts)
   //console.log(JSON.stringify(res.data, null, 2))
   
-  var res = await axios.post("http://localhost:8989/sql/", payload, opts)
+  var res = await axios.post("http://127.0.0.1:8989/sql/", payload, opts)
   const token = "?token=" + res.data.meta.token
   const connection = res.data.links.self
   console.log(connection);
@@ -435,7 +439,8 @@ async function main() {
   //await test_import_cancel(connection, token)
   //await test_import_with_server(connection, token)
   //await compare_existing_results(connection, token)
-  
+
+  console.log("Deleting main connection")
   await axios.delete(connection + token, opts)
   return "ok"
 }

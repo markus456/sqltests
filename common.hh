@@ -7,6 +7,8 @@
 #include <cstring>
 #include <array>
 
+using namespace std::literals::string_literals;
+
 struct Config
 {
     const char *user = "maxuser";

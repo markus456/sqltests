@@ -12,6 +12,8 @@ int port = 3000;
 int main(int argc, char** argv)
 {
     MYSQL* c = mysql_init(nullptr);
+    unsigned long map = 16546876;
+    mysql_optionsv(c, MYSQL_OPT_MAX_ALLOWED_PACKET, &map);
 
     if (!mysql_real_connect(c, host, user, password, db, port, nullptr, 0))
     {
@@ -21,12 +23,14 @@ int main(int argc, char** argv)
     {
         for (std::string query; std::getline(std::cin, query);)
         {
+            std::cout << "Query: " << query << std::endl;
+
             if (mysql_query(c, query.c_str()))
             {
                 std::cout << "Query failed: " << mysql_error(c) << std::endl;
                 break;
             }
-            else if (auto* res = mysql_use_result(c))
+            else if (auto* res = mysql_store_result(c))
             {
                 while (auto row = mysql_fetch_row(res))
                 {
@@ -39,6 +43,11 @@ int main(int argc, char** argv)
                 }
 
                 mysql_free_result(res);
+            }
+
+            if (mysql_errno(c))
+            {
+                std::cout << "Error after result: " << mysql_error(c) << std::endl;
             }
         }
     }

@@ -2,19 +2,20 @@ const axios = require("axios")
 const json_diff = require("json-diff")
 const opts = {auth: {username: "admin", password: "mariadb"}}
 
-async function kill_query(payload) {
+async function reconnect_loop(payload) {
   var res = await axios.post("http://127.0.0.1:8989/sql/", payload, opts)
   const token = "?token=" + res.data.meta.token
   const connection = res.data.links.self
 
-  console.time("query")
-  var res = axios.post(connection + "queries" + token, {sql: process.argv[3]}, opts)
-  await new Promise((res) => setTimeout(res, 1000));
-
-  await axios.post(connection + "cancel/" + token, {}, opts)
-  const data = await res
-  console.log(JSON.stringify(data.data, null, 2))
-  console.timeEnd("query");
+  while (true)
+  {
+    try{
+      var res = await axios.post(connection + "reconnect" + token, null, opts)
+      res = await axios.post(connection + "queries" + token, {"sql": "select 1"}, opts)
+    } catch (e){
+      console.log(e.toString())
+    }
+  }
   
   await axios.delete(connection + token, opts)
   return "ok"
@@ -32,8 +33,7 @@ async function main() {
     db: "test"
    }
 
-  await kill_query(payload_odbc)
-  await kill_query(payload_mariadb)
+  await reconnect_loop(payload_odbc)
 }
 
 main()
